@@ -295,6 +295,12 @@ module RubyXL
             end
           end
 
+          if data_type == 'e' && cell_formula.nil?
+            prev_cell = wb.worksheets[i].sheet_data[cell_index[0]-1][cell_index[1]]
+            cell_formula = prev_cell.instance_variable_get(:@formula)
+            cell_formula_attr = prev_cell.instance_variable_get(:@formula_attributes)
+          end
+
           style_index = value['s'].to_i #nil goes to 0 (default)
 
           wb.worksheets[i].sheet_data[cell_index[0]][cell_index[1]] =
