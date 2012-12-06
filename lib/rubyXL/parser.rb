@@ -50,6 +50,9 @@ module RubyXL
 
     # is the specified cell within the range
     def Parser.contains?(ref, cell_ref)
+      if ref =~ /^[$]*([a-zA-Z]+)[$]*([\d]+)$/
+        return ref.gsub('$', '') == cell_ref.gsub('$', '')
+      end
       rows, cols = Parser.split_ref(ref)
       point = Parser.split_cell(cell_ref)
       point[:col].between?(cols.first, cols.last) && point[:row].between?(rows.first, rows.last)
