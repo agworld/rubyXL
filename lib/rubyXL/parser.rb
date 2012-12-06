@@ -35,6 +35,50 @@ module RubyXL
       return index
     end
 
+    def Parser.split_ref(ref)
+      c1, r1, c2, r2 = /^[$]*([a-zA-Z]+)[$]*([\d]+):[$]*([a-zA-Z]+)[$]*([\d]+)$/.match(ref).to_a[1..-1]
+      [(r1.to_i..r2.to_i), (c1..c2)]
+    end
+
+    def Parser.split_cell(ref)
+      c, r = /^[$]*([a-zA-Z]+)[$]*([\d]+)$/.match(ref).to_a[1..-1]
+      {
+        :row => r.to_i,
+        :col => c
+      }
+    end
+
+    # is the specified cell within the range
+    def Parser.contains?(ref, cell_ref)
+      rows, cols = Parser.split_ref(ref)
+      point = Parser.split_cell(cell_ref)
+      point[:col].between?(cols.first, cols.last) && point[:row].between?(rows.first, rows.last)
+    end
+
+    # return the row and col offset for the specified cell within the specified range
+    def Parser.offset(ref, cell_ref)
+      rows, cols = Parser.split_ref(ref)
+      point = Parser.split_cell(cell_ref)
+      {
+        :row => rows.to_a.index(point[:row]),
+        :col => cols.to_a.index(point[:col])
+      }
+    end
+
+    def Parser.modify(formula, offset)
+      subs = Hash[formula.scan(/([a-zA-Z]+[0-9]+)/).flatten.map do |f|
+        from = Parser.split_cell(f)
+        to = from.clone
+        offset[:row].times { to[:row] = to[:row].succ }
+        offset[:col].times { to[:col] = to[:col].succ }
+        g = f.gsub(from[:row].to_s, to[:row].to_s)
+        g.gsub!(from[:col].to_s, to[:col].to_s)
+        [f, g]
+      end]
+      new_formula = formula.clone
+      subs.each { |from, to| new_formula.gsub!(from, to) }
+      new_formula
+    end
 
     # data_only allows only the sheet data to be parsed, so as to speed up parsing
     # However, using this option will result in date-formatted cells being interpreted as numbers
@@ -220,6 +264,7 @@ module RubyXL
       end
 
 
+      shared_formulas = {}
       row_data = files[j].xpath('/xmlns:worksheet/xmlns:sheetData/xmlns:row[xmlns:c[xmlns:v]]',namespaces)
       row_data.each do |row|
         unless @data_only
@@ -287,18 +332,33 @@ module RubyXL
             fmla_css_content= fmla_css.content
             if(fmla_css_content != "")
               cell_formula = fmla_css_content
+            end
+            fmla_css_attributes= fmla_css.attributes
+            if(fmla_css_attributes.length > 0)
               cell_formula_attr = {}
-              fmla_css_attributes = fmla_css.attributes
               cell_formula_attr['t'] = fmla_css_attributes['t'].content if fmla_css_attributes['t']
               cell_formula_attr['ref'] = fmla_css_attributes['ref'].content if fmla_css_attributes['ref']
               cell_formula_attr['si'] = fmla_css_attributes['si'].content if fmla_css_attributes['si']
+              if cell_formula_attr['t'] == 'shared'
+                if cell_formula_attr.has_key?('ref')
+                  shared_formulas[cell_formula_attr['ref']] = cell_formula
+                elsif cell_formula.nil?
+                  # find out which formula we're sharing
+                  # modify the formula based on where we are
+                  shared_ref = nil
+                  cell_ref = value_attributes['r'].content
+                  shared_formulas.keys.each do |ref|
+                    if Parser.contains?(ref, cell_ref)
+                      shared_ref = ref
+                      break
+                    end
+                  end
+                  raise 'Unable to find shared formula' if shared_ref.nil?
+                  offset = Parser.offset(shared_ref, cell_ref)
+                  cell_formula = Parser.modify(shared_formulas[shared_ref], offset)
+                end
+              end
             end
-          end
-
-          if data_type == 'e' && cell_formula.nil?
-            prev_cell = wb.worksheets[i].sheet_data[cell_index[0]-1][cell_index[1]]
-            cell_formula = prev_cell.instance_variable_get(:@formula)
-            cell_formula_attr = prev_cell.instance_variable_get(:@formula_attributes)
           end
 
           style_index = value['s'].to_i #nil goes to 0 (default)
